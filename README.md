@@ -8,16 +8,17 @@ Built for open-source maintainers and community managers who need a quick pulse 
 
 - **4-section dashboard**: Growth & Acquisition, PR Health, Issue Health, Community Activity
 - **29 tracked metrics**: stars, forks, PRs, issues, commits, comments, contributors, retention, and more
-- **Auto-fetch**: configurable interval (default 30min) via cron
+- **Auto-fetch**: configurable interval (default 30min) via cron, clock-aligned scheduling
 - **Manual update**: password-protected with rate limiting and brute-force protection
-- **Dual view mode**: Daily (one row per day, closest to midnight) / Raw (every fetch as a row)
+- **Resilient fetching**: all API calls retry up to 10 times with 10s intervals, fallback to previous data on failure
+- **Clock calibration**: auto-corrects system clock skew via GitHub server time on startup
+- **Dual view mode**: Daily (last record per day) / Raw (every fetch as a row)
 - **Export**: Excel (.xlsx) and CSV download, respects current view mode and date range
 - **XML storage**: human-readable, git-friendly, zero-config (no database needed)
 - **Fully configurable**: project name, repo, password, accent color, interval — all via `.env`
 - **Dark theme**: black background, glow accents, custom scrollbars, smooth animations
 - **Mobile responsive**: adaptive grid layout for all screen sizes
-- **Toast notifications**: API errors shown as non-intrusive toasts, never interrupts your workflow
-- **Security**: bcrypt password hashing, 500ms timing-attack delay, IP-based rate limiting (5 attempts / 15min)
+- **Security**: bcrypt password hashing, IP-based rate limiting, security headers, no internal error leakage
 
 ## Quick Start
 
@@ -39,11 +40,13 @@ All settings in `.env`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `GITHUB_TOKEN` | — | GitHub PAT (`ghp_` or `github_pat_` prefix). Without it, limited to 60 req/hr |
-| `OBSERVER_NAME` | `Observer Beacon` | Display name in the header (supports spaces) |
+| `OBSERVER_NAME` | `Observer Beacon` | Display name in the header |
 | `OBSERVER_REPO` | `BeaconCat/observer-beacon` | GitHub repo to monitor (`owner/repo`) |
 | `OBSERVER_PASSWORD` | `pl3ase_ch@nge_m3` | Password for manual update trigger |
 | `OBSERVER_ACCENT` | `"#00d4ff"` | Title hover glow color (hex, must quote the `#`) |
-| `OBSERVER_INTERVAL` | `30` | Auto-fetch interval in minutes |
+| `OBSERVER_INTERVAL` | `30` | Auto-fetch interval in minutes (clock-aligned) |
+| `OBSERVER_MANUAL_INTERVAL` | `5` | Manual update cooldown in minutes |
+| `OBSERVER_SKIP_CRON_AFTER_MANUAL` | `true` | Skip next auto-fetch after a manual update |
 | `PORT` | `3175` | Server port |
 
 ## GitHub Token
@@ -65,7 +68,7 @@ Go to [GitHub Settings > Tokens](https://github.com/settings/tokens?type=beta) >
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/config` | Project name, repo, accent color |
-| `GET` | `/api/status` | Last update times, token status, interval |
+| `GET` | `/api/status` | Last update times, cron status, interval |
 | `GET` | `/api/metrics?from=&to=&mode=daily\|raw` | Query metrics |
 | `GET` | `/api/metrics/latest` | Latest record |
 | `POST` | `/api/verify` | Verify password only |
@@ -94,6 +97,7 @@ location / {
     proxy_pass http://127.0.0.1:3175;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 }
 ```
 
