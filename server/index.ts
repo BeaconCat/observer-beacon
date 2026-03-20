@@ -4,15 +4,25 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDailyMetrics, getRawMetrics, getLatest } from './db.ts';
 import { verifyPassword } from './auth.ts';
-import { startCron, manualUpdate, getLastCronRun, getLastManualRun, isCronRunning, getIntervalMin } from './cron.ts';
+import { startCron, manualUpdate, getLastCronRun, getLastManualRun, isCronRunning, getIntervalMin, getManualCooldownMin } from './cron.ts';
 import { toExcel, toCsv } from './export.ts';
-import { getTokenStatus } from './github.ts';
+import { getTokenStatus, calibrateClock, correctedNow } from './github.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = Number(process.env.PORT) || 3175;
 
 app.use(express.json({ limit: '1kb' }));
+
+// Security headers
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '0');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
 
 const PROJECT_NAME = (process.env.OBSERVER_NAME || 'Observer Beacon').trim();
 const REPO_URL = (process.env.OBSERVER_REPO || 'BeaconCat/observer-beacon').trim();
@@ -34,7 +44,8 @@ app.get('/api/metrics', (req, res) => {
     if (to && !dateRe.test(to)) return res.status(400).json({ error: 'Invalid to date' });
     res.json(mode === 'raw' ? getRawMetrics(from, to) : getDailyMetrics(from, to));
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    console.error('[API] /api/metrics error:', e.message);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -54,7 +65,7 @@ app.get('/api/status', (_req, res) => {
     lastManualRun: getLastManualRun(),
     cronRunning: isCronRunning(),
     intervalMin: getIntervalMin(),
-    tokenStatus: getTokenStatus(),
+    manualCooldownMin: getManualCooldownMin(),
   });
 });
 
@@ -80,7 +91,8 @@ app.post('/api/update', async (req, res) => {
     res.json({ ok: true, metrics: latest });
   } catch (e: any) {
     const isCooldown = e.message?.includes('cooldown');
-    res.status(isCooldown ? 429 : 500).json({ ok: false, error: e.message });
+    if (!isCooldown) console.error('[API] /api/update error:', e.message);
+    res.status(isCooldown ? 429 : 500).json({ ok: false, error: isCooldown ? e.message : 'Update failed' });
   }
 });
 
@@ -95,10 +107,11 @@ app.get('/api/export/excel', async (req, res) => {
     const prefix = PROJECT_NAME.toLowerCase().replace(/\s+/g, '-');
     const buf = await toExcel(data);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=${prefix}-${suffix}-${new Date().toISOString().slice(0,10)}.xlsx`);
+    res.setHeader('Content-Disposition', `attachment; filename=${prefix}-${suffix}-${correctedNow().toISOString().slice(0,10)}.xlsx`);
     res.send(buf);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    console.error('[API] /api/export/excel error:', e.message);
+    res.status(500).json({ error: 'Export failed' });
   }
 });
 
@@ -113,10 +126,11 @@ app.get('/api/export/csv', (req, res) => {
     const prefix = PROJECT_NAME.toLowerCase().replace(/\s+/g, '-');
     const csv = toCsv(data);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename=${prefix}-${suffix}-${new Date().toISOString().slice(0,10)}.csv`);
+    res.setHeader('Content-Disposition', `attachment; filename=${prefix}-${suffix}-${correctedNow().toISOString().slice(0,10)}.csv`);
     res.send(csv);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    console.error('[API] /api/export/csv error:', e.message);
+    res.status(500).json({ error: 'Export failed' });
   }
 });
 
@@ -128,10 +142,13 @@ app.get('*', (_req, res) => {
 });
 
 // Start
-startCron();
-app.listen(PORT, () => {
-  const ts = getTokenStatus();
-  console.log(`${PROJECT_NAME} Observer running at http://localhost:${PORT}`);
-  console.log(`Repo: ${REPO_URL}`);
-  console.log(`GitHub: ${ts === 'authenticated' ? 'Authenticated (5000 req/hr)' : 'Anonymous (60 req/hr)'}`);
-});
+(async () => {
+  await calibrateClock();
+  startCron();
+  app.listen(PORT, () => {
+    const ts = getTokenStatus();
+    console.log(`${PROJECT_NAME} Observer running at http://localhost:${PORT}`);
+    console.log(`Repo: ${REPO_URL}`);
+    console.log(`GitHub: ${ts === 'authenticated' ? 'Authenticated (5000 req/hr)' : 'Anonymous (60 req/hr)'}`);
+  });
+})();

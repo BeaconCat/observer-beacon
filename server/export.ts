@@ -50,8 +50,12 @@ export async function toExcel(data: DailyMetrics[]): Promise<Buffer> {
 export function toCsv(data: DailyMetrics[]): string {
   const header = COLUMNS.map(c => c.header).join(',');
   const rows = data.map(d => COLUMNS.map(c => {
-    const v = (d as any)[c.key];
-    return typeof v === 'string' && v.includes(',') ? `"${v}"` : String(v ?? '');
+    const v = String((d as any)[c.key] ?? '');
+    // CSV injection protection: prefix formula-triggering chars with a tab
+    const needsEscape = /^[=+\-@\t\r]/.test(v);
+    const needsQuote = v.includes(',') || v.includes('"') || v.includes('\n') || needsEscape;
+    const escaped = needsEscape ? `\t${v}` : v;
+    return needsQuote ? `"${escaped.replace(/"/g, '""')}"` : escaped;
   }).join(','));
   return [header, ...rows].join('\n');
 }

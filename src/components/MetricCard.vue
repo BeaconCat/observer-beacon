@@ -31,7 +31,7 @@ const props = withDefaults(defineProps<{
 }
 .mc:hover { border-color: var(--accent); }
 .mc-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-.mc-delta { font-size: 11px; font-weight: 600; font-family: monospace; padding: 1px 5px; border-radius: 4px; }
+.mc-delta { font-size: 14px; font-weight: 700; font-family: monospace; padding: 2px 6px; border-radius: 4px; }
 .mc-delta.up { color: #22c55e; background: rgba(34,197,94,0.12); }
 .mc-delta.down { color: #ef4444; background: rgba(239,68,68,0.12); }
 .mc-value { font-size: 26px; font-weight: 700; color: #fff; font-family: 'Segoe UI', monospace; line-height: 1.1; }

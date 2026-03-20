@@ -34,10 +34,15 @@ async function loadData() {
   try { config.value = await fetchConfig(); configLoaded.value = true; } catch {}
   try { status.value = await fetchStatus(); } catch {}
   try {
-    const [from, to] = dateRange.value
-      ? [new Date(dateRange.value[0]).toISOString().slice(0, 10), new Date(dateRange.value[1]).toISOString().slice(0, 10)]
-      : [new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10), new Date().toISOString().slice(0, 10)];
     const mode = dailyMode.value ? 'daily' : 'raw';
+    const defaultDays = mode === 'raw' ? 2 : 31;
+    const toLocalDate = (ts: number) => {
+      const d = new Date(ts);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    };
+    const [from, to] = dateRange.value
+      ? [toLocalDate(dateRange.value[0]), toLocalDate(dateRange.value[1])]
+      : [toLocalDate(Date.now() - defaultDays * 86400000), toLocalDate(Date.now())];
     metrics.value = await fetchMetrics(from, to, mode);
     latest.value = await fetchLatest();
   } catch (e) { console.error(e); }
@@ -134,14 +139,13 @@ function delta(key: keyof DailyMetrics): number {
                 <h1 class="title">{{ config.name }}</h1>
               </a>
               <span class="title-suffix anim-in d1">Observer</span>
-              <NTag v-if="status?.tokenStatus === 'authenticated'" class="anim-in d2" type="success" size="small" :bordered="false">Authenticated</NTag>
-              <NTag v-else class="anim-in d2" type="warning" size="small" :bordered="false">Anonymous</NTag>
             </template>
           </div>
           <div class="date-label" v-if="latest">
-            {{ latest.date }} | fetched {{ latest.fetched_at?.slice(11, 16) }} UTC
-            <span v-if="status?.lastManualRun"> | manual {{ status.lastManualRun.slice(11,16) }}</span>
-            <span v-if="status?.intervalMin"> | auto every {{ status.intervalMin }}min</span>
+            <span class="date-line">{{ latest.date }} | Fetched {{ latest.fetched_at?.slice(11, 16) }} UTC</span>
+            <span class="date-sep">|</span>
+            <span class="date-line"><span v-if="status?.lastManualRun">Manual {{ status.lastManualRun.slice(11,16) }}</span>
+            <span v-if="status?.intervalMin"> | Auto Every {{ status.intervalMin }}min</span></span>
           </div>
         </div>
         <div class="controls">
@@ -191,17 +195,18 @@ function delta(key: keyof DailyMetrics): number {
         <Icon icon="carbon:growth" width="18" style="color:#eab308" />
         <span>Growth & Acquisition</span>
       </div>
-      <div class="card-grid-4 anim-up d1">
+      <div class="card-grid-5 anim-up d1">
         <MetricCard label="Total Stars" :value="latest?.total_stars ?? 0" icon="carbon:star" color="#eab308" :delta="delta('total_stars')" />
         <MetricCard label="Total Forks" :value="latest?.total_forks ?? 0" icon="carbon:fork" color="#3b82f6" :delta="delta('total_forks')" />
-        <MetricCard label="Watchers" :value="latest?.total_watchers ?? 0" icon="carbon:view" color="#8b5cf6" />
-        <MetricCard label="Contributors" :value="latest?.total_contributors ?? 0" icon="carbon:group" color="#22c55e" />
+        <MetricCard label="Watchers" :value="latest?.total_watchers ?? 0" icon="carbon:view" color="#8b5cf6" :delta="delta('total_watchers')" />
+        <MetricCard label="Contributors" :value="latest?.total_contributors ?? 0" icon="carbon:group" color="#22c55e" :delta="delta('total_contributors')" />
+        <MetricCard label="Repo Size" :value="latest?.repo_size_kb ? Math.round(latest.repo_size_kb / 1024) + ' MB' : '—'" icon="carbon:data-base" color="#888" :raw="true" />
       </div>
       <div class="card-grid-4 anim-up d2">
-        <MetricCard label="New Participants" :value="latest?.new_participants ?? 0" icon="carbon:user-multiple" color="#eab308" />
-        <MetricCard label="First-Time Contributors" :value="latest?.first_time_contributors ?? 0" icon="carbon:user-avatar-filled" color="#22c55e" />
-        <MetricCard label="Returning Users" :value="latest?.returning_users ?? 0" icon="carbon:repeat" color="#3b82f6" />
-        <MetricCard label="Active Users" :value="latest?.active_users ?? 0" icon="carbon:activity" color="#f97316" />
+        <MetricCard label="Committers Today" :value="latest?.new_participants ?? 0" icon="carbon:code" color="#eab308" />
+        <MetricCard label="First-Time Committers" :value="latest?.first_time_contributors ?? 0" icon="carbon:user-avatar-filled" color="#22c55e" />
+        <MetricCard label="Returning Committers" :value="latest?.returning_users ?? 0" icon="carbon:repeat" color="#3b82f6" />
+        <MetricCard label="Active Users (all)" :value="latest?.active_users ?? 0" icon="carbon:activity" color="#f97316" />
       </div>
       <div class="chart-row anim-up d3">
         <div class="chart-box">
@@ -209,8 +214,8 @@ function delta(key: keyof DailyMetrics): number {
             :colors="['#eab308','#3b82f6']" :labels="['Stars','Forks']" />
         </div>
         <div class="chart-box">
-          <TrendChart :data="metrics" title="New Participants & Retention" :keys="['new_participants','first_time_contributors','returning_users']"
-            :colors="['#eab308','#22c55e','#3b82f6']" :labels="['New Participants','First-Time','Returning']" />
+          <TrendChart :data="metrics" title="Committers & Retention" :keys="['new_participants','first_time_contributors','returning_users']"
+            :colors="['#eab308','#22c55e','#3b82f6']" :labels="['Committers','First-Time','Returning']" />
         </div>
       </div>
 
@@ -223,7 +228,7 @@ function delta(key: keyof DailyMetrics): number {
         <MetricCard label="New PRs" :value="latest?.new_prs ?? 0" icon="carbon:add-alt" color="#3b82f6" />
         <MetricCard label="Merged" :value="latest?.merged_prs ?? 0" icon="carbon:checkmark-filled" color="#22c55e" />
         <MetricCard label="Closed (unmerged)" :value="latest?.closed_prs ?? 0" icon="carbon:close-outline" color="#ef4444" />
-        <MetricCard label="Open PRs" :value="latest?.open_prs ?? 0" icon="carbon:in-progress" color="#f97316" />
+        <MetricCard label="Open PRs" :value="latest?.open_prs ?? 0" icon="carbon:in-progress" color="#f97316" :delta="delta('open_prs')" />
         <MetricCard label="Avg Reviews" :value="latest?.avg_review_rounds ?? 0" icon="carbon:catalog" color="#eab308" />
       </div>
       <div class="chart-row anim-up d6">
@@ -245,8 +250,8 @@ function delta(key: keyof DailyMetrics): number {
       <div class="card-grid-5 anim-up d8">
         <MetricCard label="New Issues" :value="latest?.new_issues ?? 0" icon="carbon:warning-alt" color="#ef4444" />
         <MetricCard label="Closed" :value="latest?.closed_issues ?? 0" icon="carbon:checkmark" color="#22c55e" />
-        <MetricCard label="Open Issues" :value="latest?.open_issues ?? 0" icon="carbon:pending" color="#f97316" />
-        <MetricCard label="Zero-Reply" :value="latest?.zero_reply_issues ?? 0" icon="carbon:chat-off" color="#ef4444" />
+        <MetricCard label="Open Issues" :value="latest?.open_issues ?? 0" icon="carbon:pending" color="#f97316" :delta="delta('open_issues')" />
+        <MetricCard label="Zero-Reply" :value="latest?.zero_reply_issues ?? 0" icon="carbon:chat-off" color="#ef4444" :delta="delta('zero_reply_issues')" />
         <MetricCard label="Avg Close (hrs)" :value="latest?.avg_issue_close_hours ?? 0" icon="carbon:time" color="#eab308" />
       </div>
       <div class="card-grid-3 anim-up d9" style="margin-bottom:16px">
@@ -270,12 +275,11 @@ function delta(key: keyof DailyMetrics): number {
         <Icon icon="carbon:chat" width="18" style="color:#8b5cf6" />
         <span>Community Activity</span>
       </div>
-      <div class="card-grid-5 anim-up d12">
+      <div class="card-grid-4 anim-up d12">
         <MetricCard label="Daily Commits" :value="latest?.daily_commits ?? 0" icon="carbon:commit" color="#22c55e" />
         <MetricCard label="Total Commits" :value="latest?.total_commits ?? 0" icon="carbon:version" color="#22c55e" />
         <MetricCard label="Total Comments" :value="latest?.daily_comments ?? 0" icon="carbon:chat" color="#8b5cf6" />
         <MetricCard label="PR Reviews" :value="latest?.pr_review_comments ?? 0" icon="carbon:document-preliminary" color="#3b82f6" />
-        <MetricCard label="Repo Size" :value="latest?.repo_size_kb ? Math.round(latest.repo_size_kb / 1024) + ' MB' : '—'" icon="carbon:data-base" color="#888" :raw="true" />
       </div>
       <div class="chart-row anim-up d13">
         <div class="chart-box">
@@ -378,7 +382,14 @@ html, body { scrollbar-width: thin; scrollbar-color: #333 transparent; }
 .controls { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .date-row { display: flex; gap: 8px; }
 .btn-row { display: flex; gap: 6px; }
-.date-label { font-size: 11px; color: #555; font-family: monospace; }
+.date-label { font-size: 11px; color: #555; font-family: monospace; display: flex; flex-wrap: wrap; gap: 0 4px; align-items: center; }
+.date-line { white-space: nowrap; }
+.date-sep { color: #333; }
+@media (max-width: 500px) {
+  .date-sep { display: none; }
+  .date-label { justify-content: center; }
+  .date-line { width: 100%; text-align: center; }
+}
 
 /* Section titles */
 .section-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; color: #ccc; margin: 20px 0 12px; padding-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.06); }
@@ -420,7 +431,7 @@ html, body { scrollbar-width: thin; scrollbar-color: #333 transparent; }
   .card-grid-5 > :last-child:nth-child(odd) { grid-column: 1 / -1; }
   .chart-row { grid-template-columns: 1fr; }
 }
-@media (max-width: 480px) {
+@media (max-width: 360px) {
   .card-grid-3, .card-grid-4, .card-grid-5 { grid-template-columns: 1fr; }
   .card-grid-3 > :last-child:nth-child(odd),
   .card-grid-4 > :last-child:nth-child(odd),

@@ -77,7 +77,7 @@ function readAll(): DailyMetrics[] {
   const parsed = parser.parse(xml);
   if (!parsed.metrics || !parsed.metrics.record) return [];
   const records = Array.isArray(parsed.metrics.record) ? parsed.metrics.record : [parsed.metrics.record];
-  return records.map(parseRow);
+  return records.map(parseRow).sort((a, b) => (a.fetched_at || '').localeCompare(b.fetched_at || ''));
 }
 
 function writeAll(metrics: DailyMetrics[]): void {
@@ -89,21 +89,53 @@ function writeAll(metrics: DailyMetrics[]): void {
 }
 
 // Append a new record (every fetch = new row)
+// Minimum 2-minute gap to prevent near-duplicate writes from rapid retries
+const MIN_DEDUP_MS = 2 * 60 * 1000;
+
 export function appendMetrics(m: DailyMetrics): void {
   const all = readAll();
+  if (all.length > 0) {
+    // Find the truly latest record by fetched_at
+    let latestRecord = all[0];
+    let latestTime = new Date(latestRecord.fetched_at || '1970-01-01').getTime();
+    for (const r of all) {
+      const t = new Date(r.fetched_at || '1970-01-01').getTime();
+      if (t > latestTime) { latestRecord = r; latestTime = t; }
+    }
+    // Prevent near-duplicate writes (< 2 min apart)
+    if (latestRecord.fetched_at && m.fetched_at) {
+      const gap = new Date(m.fetched_at).getTime() - latestTime;
+      if (gap >= 0 && gap < MIN_DEDUP_MS) {
+        console.log(`[WRITE] Skipped — too close to last record (${Math.round(gap/1000)}s < ${MIN_DEDUP_MS/1000}s)`);
+        return;
+      }
+    }
+    // Validate: reject records with total_contributors=0 when it shouldn't be
+    if (m.total_contributors === 0 && latestRecord.total_contributors > 0) {
+      console.log(`[WRITE] Skipped — total_contributors=0 (likely 202 response)`);
+      return;
+    }
+  }
   all.push(m);
   writeAll(all);
 }
 
-// Get all raw records in date range
+// Get all raw records in date range (from/to are local dates YYYY-MM-DD)
+// Filter by fetched_at to avoid UTC date boundary issues
 export function getRawMetrics(from?: string, to?: string): DailyMetrics[] {
   let all = readAll();
-  if (from) all = all.filter(d => d.date >= from);
-  if (to) all = all.filter(d => d.date <= to);
+  if (from) {
+    const fromStart = new Date(from + 'T00:00:00').toISOString();
+    all = all.filter(d => (d.fetched_at || d.date) >= fromStart);
+  }
+  if (to) {
+    const toEnd = new Date(to + 'T23:59:59').toISOString();
+    all = all.filter(d => (d.fetched_at || d.date) <= toEnd);
+  }
   return all.sort((a, b) => (a.fetched_at || '').localeCompare(b.fetched_at || ''));
 }
 
-// Get daily metrics: for each date, pick the record closest to midnight (00:00)
+// Get daily metrics: for each date, pick the last record of the day (most complete data)
 export function getDailyMetrics(from?: string, to?: string): DailyMetrics[] {
   const raw = getRawMetrics(from, to);
   const byDate = new Map<string, DailyMetrics[]>();
@@ -114,20 +146,12 @@ export function getDailyMetrics(from?: string, to?: string): DailyMetrics[] {
   }
   const result: DailyMetrics[] = [];
   for (const [, records] of byDate) {
-    // Pick the one closest to 00:00 of that day
+    // Pick the last record of the day (latest fetched_at)
     let best = records[0];
-    let bestDist = Infinity;
+    let bestTime = new Date(best.fetched_at || '1970-01-01').getTime();
     for (const r of records) {
-      if (!r.fetched_at) continue;
-      const fetchTime = new Date(r.fetched_at);
-      const midnight = new Date(r.date + 'T00:00:00Z');
-      // Distance to midnight (could be same day or next day's 00:00)
-      const nextMidnight = new Date(midnight.getTime() + 86400000);
-      const dist = Math.min(
-        Math.abs(fetchTime.getTime() - midnight.getTime()),
-        Math.abs(fetchTime.getTime() - nextMidnight.getTime()),
-      );
-      if (dist < bestDist) { best = r; bestDist = dist; }
+      const t = new Date(r.fetched_at || '1970-01-01').getTime();
+      if (t > bestTime) { best = r; bestTime = t; }
     }
     result.push(best);
   }
@@ -151,4 +175,24 @@ export function saveUsers(users: Set<string>): void {
   const dir = path.dirname(usersPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(usersPath, [...users].join('\n'), 'utf-8');
+}
+
+// Track today's new users separately so first-time only increases within a day
+const todayNewUsersPath = () => path.join(path.dirname(DB_PATH), 'today_new_users.txt');
+const todayDatePath = () => path.join(path.dirname(DB_PATH), 'today_date.txt');
+
+export function getTodayNewUsers(date: string): Set<string> {
+  const dp = todayDatePath();
+  const up = todayNewUsersPath();
+  // If date changed, reset today's new users
+  if (fs.existsSync(dp) && fs.readFileSync(dp, 'utf-8').trim() !== date) {
+    if (fs.existsSync(up)) fs.unlinkSync(up);
+  }
+  fs.writeFileSync(dp, date, 'utf-8');
+  if (!fs.existsSync(up)) return new Set();
+  return new Set(fs.readFileSync(up, 'utf-8').split('\n').filter(Boolean));
+}
+
+export function saveTodayNewUsers(users: Set<string>): void {
+  fs.writeFileSync(todayNewUsersPath(), [...users].join('\n'), 'utf-8');
 }
