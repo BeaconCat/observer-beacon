@@ -4,6 +4,10 @@ A lightweight, self-hosted GitHub repository monitoring dashboard. Track PRs, is
 
 Built for open-source maintainers and community managers who need a quick pulse on their project's health.
 
+<p align="center">
+  <img src="preview.jpg" alt="Observer Beacon Dashboard" width="100%">
+</p>
+
 ## Features
 
 - **4-section dashboard**: Growth & Acquisition, PR Health, Issue Health, Community Activity
